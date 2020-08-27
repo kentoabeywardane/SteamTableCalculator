@@ -1,39 +1,59 @@
 import numpy as np
 import pandas as pd
 
-SatWatTemp = pd.DataFrame()
-SatWatPres = pd.DataFrame()
-SupWat = pd.DataFrame()
-CompWat = pd.DataFrame()
+NIST_sat_temp = pd.DataFrame()
+NIST_sat_pres = pd.DataFrame()
+NIST_sup = pd.DataFrame()
+NIST_comp = pd.DataFrame()
 
 
-def out(df, sheet):
+def nist_table(df, sheet, if_sat):
     excel = pd.read_excel('steam tables.xlsx', sheet_name=sheet)
     for column in excel.columns:
-        df[column] = excel[column].apply(lambda x: x.split()).explode().reset_index().drop('index', axis=1).squeeze()
-    for column in df.columns:
-        df[column] = df[column].apply(lambda x: float(x))
-    df.set_index([df.columns[0], df.columns[1]], inplace=True)
-    if 'Sat Liq vf' in df.columns:
-        df['Sat Liq vf'] = df['Sat Liq vf'].div(1000)
-    # return df
+        df[column] = excel[column]
+    df['fill in P'] = df['P, Mpa']
+    for name in df.columns:
+        df[name] = df[name].apply(lambda x: str(x).replace(' ', '')).apply(lambda x: float(x))
+    df.set_index(['P, Mpa', 'Temp C'], inplace=True)
+    if not if_sat:
+        df['v'] = df['v (m^3/Mg)'].div(1000)
+        df['u'] = df['h'] - (df['v (m^3/Mg)'] * df['fill in P'])
+        df.drop(['v (m^3/Mg)', 'fill in P', 'p'], axis=1, inplace=True)
+        df = df.rename_axis(index=['Pres', 'Temp'])[['v', 'u', 'h', 's']]
+    elif if_sat:
+        df['Sat Liq uf'] = df['hf kJ/kg'] - (df['vf cm3/g'] * df['fill in P'])
+        df['Sat Liq uf'] = df['Sat Liq uf'].sub(df['Sat Liq uf'][0])
+        df['Sat Vap ug'] = df['hg'] - (df['vg'] * df['fill in P'])
+        df['Sat Liq vf'] = df['vf cm3/g'].div(1000)
+        df['Sat Vap vg'] = df['vg'].div(1000)
+        df.rename(columns={'hf kJ/kg': 'Sat Liq hf', 'hfg': 'Evap hfg', 'hg': 'Sat Vap hg', 'sf kJ/kg-K': 'Sat Liq sf',
+                           'sg': 'Sat Vap sg'}, index={'P, MPa': 'Pres', 'Temp C': 'Temp'}, inplace=True)
+        df.drop(['vf cm3/g', 'fill in P'], axis=1, inplace=True)
+        df = df.rename_axis(index=['Pres', 'Temp'])[['Sat Liq vf', 'Sat Vap vg', 'Sat Liq uf', 'Sat Vap ug',
+                                                     'Sat Liq hf', 'Evap hfg', 'Sat Vap hg', 'Sat Liq sf',
+                                                     'Sat Vap sg']]
+    df.index.set_levels(np.around(df.index.levels[0] * 10.0, decimals=10), level=0, inplace=True)
+    return df
 
 
-sheetNames = ['Saturated Water (Temp Table)', 'Saturated Water (Pres Table)', 'Superheated Water', 'Compressed Water']
-out(SatWatTemp, sheetNames[0])
-out(SatWatPres, sheetNames[1])
-out(SupWat, sheetNames[2])
-out(CompWat, sheetNames[3])
+def combine_sat_tp(df_temp, df_pres):
+    df = pd.concat([df_temp.reset_index()[sat_column_names], df_pres.reset_index()[sat_column_names]])
+    df = df.sort_values(by=['Temp']).drop_duplicates(subset=['Pres']).drop_duplicates(subset=['Temp'])
+    df = df.set_index([df.columns[0], df.columns[1]])
+    return df
 
-# noinspection SpellCheckingInspection
-SatWat = pd.concat([SatWatTemp.reset_index(), SatWatPres.reset_index()[['Temp', 'Pres', 'Sat Liq vf',
-                                                                        'Sat Vap vg', 'Sat Liq uf', 'Sat Vap ug',
-                                                                        'Sat Liq hf', 'Evap hfg', 'Sat Vap hg',
-                                                                        'Sat Liq sf', 'Sat Vap sg']]])
-SatWat = SatWat.sort_values(by=['Temp']).drop_duplicates(subset=['Pres'])
-SatWat = SatWat.set_index([SatWat.columns[0], SatWat.columns[1]])
 
-CompWat['v'] = CompWat['v'].div(1000)
+sheetNames = [ 'NIST Sat Temp', 'NIST Sat Pres', 'NIST Superheated', 'NIST Compressed']
+NIST_sup = nist_table(NIST_sup, 'NIST Superheated', False)
+NIST_comp = nist_table(NIST_comp, 'NIST Compressed', False)
+NIST_sat_temp = nist_table(NIST_sat_temp, 'NIST Sat Temp', True)
+NIST_sat_pres = nist_table(NIST_sat_pres, 'NIST Sat Pres', True)
+
+sat_column_names = ['Temp', 'Pres', 'Sat Liq vf', 'Sat Vap vg', 'Sat Liq uf', 'Sat Vap ug',
+                    'Sat Liq hf', 'Evap hfg', 'Sat Vap hg', 'Sat Liq sf', 'Sat Vap sg']
+
+NIST_sat = combine_sat_tp(NIST_sat_temp, NIST_sat_pres)
+
 
 #    Copy and Paste From Here last updated: 8/23
 #   ------------------------------------------------------------------------------------------
@@ -337,10 +357,10 @@ class NonSat:
 #   ----------------------------------------- updated 8/23
 def return_row(element, column):
     pos = np.where(column == element)[0][0]
-    el_dict = SatWat.xs(SatWat.index[pos]).to_dict()
+    el_dict = NIST_sat.xs(NIST_sat.index[pos]).to_dict()
     f_dict = {}
-    names = SatWat.index.names
-    f_dict.update({names[0]: SatWat.index[pos][0], names[1]: SatWat.index[pos][1]})
+    names = NIST_sat.index.names
+    f_dict.update({names[0]: NIST_sat.index[pos][0], names[1]: NIST_sat.index[pos][1]})
     f_dict.update(el_dict)
     return f_dict
 
@@ -358,14 +378,14 @@ class InterpolateRow:
         self.p_val = (self.x * (
                 self.ind.get_level_values(1)[self.z_pos] - self.ind.get_level_values(1)[self.z_pos - 1]) +
                       self.ind.get_level_values(1)[self.z_pos - 1])
-        self.in_dict = {SatWat.index.names[0]: self.t_val, SatWat.index.names[1]: self.p_val}
+        self.in_dict = {NIST_sat.index.names[0]: self.t_val, NIST_sat.index.names[1]: self.p_val}
         self.empty_dict = {}
-        self.names = SatWat.columns
+        self.names = NIST_sat.columns
 
     def simple(self):
         for col in self.names:
-            el_val = self.x * (SatWat[col].values[self.z_pos] - SatWat[col].values[self.z_pos - 1]) + \
-                     SatWat[col].values[self.z_pos - 1]
+            el_val = self.x * (NIST_sat[col].values[self.z_pos] - NIST_sat[col].values[self.z_pos - 1]) + \
+                     NIST_sat[col].values[self.z_pos - 1]
             self.empty_dict.update({col: el_val})
         self.in_dict.update(self.empty_dict)
         return self.in_dict
@@ -373,22 +393,22 @@ class InterpolateRow:
     def complx(self):
         for col in self.names:
             if col == 'Sat Vap ug':
-                sw_rev = SatWat['Sat Vap ug'].values[::-1]
+                sw_rev = NIST_sat['Sat Vap ug'].values[::-1]
                 el_val = self.x * (sw_rev[self.z_pos] - sw_rev[self.z_pos - 1]) + sw_rev[self.z_pos - 1]
                 self.empty_dict.update({col: el_val})
             elif col == 'Sat Vap hg':
-                sw_rev = SatWat['Sat Vap hg'].values[::-1]
+                sw_rev = NIST_sat['Sat Vap hg'].values[::-1]
                 el_val = self.x * (sw_rev[self.z_pos] - sw_rev[self.z_pos - 1]) + sw_rev[self.z_pos - 1]
                 self.empty_dict.update({col: el_val})
-            elif SatWat[col].values[0] < SatWat[col].values[-1]:  # ascending must be reversed
-                el_val = self.x * (SatWat[col].sort_values(ascending=False).values[self.z_pos] -
-                                   SatWat[col].sort_values(ascending=False).values[self.z_pos - 1]) + \
-                         SatWat[col].sort_values(ascending=False).values[self.z_pos - 1]
+            elif NIST_sat[col].values[0] < NIST_sat[col].values[-1]:  # ascending must be reversed
+                el_val = self.x * (NIST_sat[col].sort_values(ascending=False).values[self.z_pos] -
+                                   NIST_sat[col].sort_values(ascending=False).values[self.z_pos - 1]) + \
+                         NIST_sat[col].sort_values(ascending=False).values[self.z_pos - 1]
                 self.empty_dict.update({col: el_val})
-            elif SatWat[col].values[0] > SatWat[col].values[-1]:
-                el_val = self.x * (SatWat[col].sort_values(ascending=True).values[self.z_pos] -
-                                   SatWat[col].sort_values(ascending=True).values[self.z_pos - 1]) + \
-                         SatWat[col].sort_values(ascending=True).values[self.z_pos - 1]
+            elif NIST_sat[col].values[0] > NIST_sat[col].values[-1]:
+                el_val = self.x * (NIST_sat[col].sort_values(ascending=True).values[self.z_pos] -
+                                   NIST_sat[col].sort_values(ascending=True).values[self.z_pos - 1]) + \
+                         NIST_sat[col].sort_values(ascending=True).values[self.z_pos - 1]
                 self.empty_dict.update({col: el_val})
         self.in_dict.update(self.empty_dict)
         return self.in_dict
@@ -397,27 +417,27 @@ class InterpolateRow:
 class QualityCalculation:
     @staticmethod
     def non_pt(z, column):
-        if SatWat[column].values[0] < SatWat[column].values[-1]:  # already ascending: only happens with f columns
-            sw_ascend = SatWat[column].sort_values().values
-            sw_index = SatWat[column].index
+        if NIST_sat[column].values[0] < NIST_sat[column].values[-1]:  # already ascending: only happens with f columns
+            sw_ascend = NIST_sat[column].sort_values().values
+            sw_index = NIST_sat[column].index
             if pd.Series.between(z, sw_ascend[0], sw_ascend[-1]):
-                if z in SatWat[column].values:
-                    return return_row(z, SatWat[column].values)
+                if z in NIST_sat[column].values:
+                    return return_row(z, NIST_sat[column].values)
                 else:
                     return InterpolateRow(sw_ascend, sw_index, z).simple()
             else:
-                f'{z} is not in range for {column}.\nMust be within range: {SatWat[column].values[0]}-{SatWat[column].values[-1]}.'
+                f'{z} is not in range for {column}.\nMust be within range: {NIST_sat[column].values[0]}-{NIST_sat[column].values[-1]}.'
 
-        elif SatWat[column].values[0] > SatWat[column].values[-1]:  # descending: only happens with vg and sg
-            sw_ascend = SatWat[column].sort_values().values
-            sw_index = SatWat[column].sort_values().index
+        elif NIST_sat[column].values[0] > NIST_sat[column].values[-1]:  # descending: only happens with vg and sg
+            sw_ascend = NIST_sat[column].sort_values().values
+            sw_index = NIST_sat[column].sort_values().index
             if pd.Series.between(z, sw_ascend[0], sw_ascend[-1]):
-                if z in SatWat[column].values:
-                    return return_row(z, SatWat[column].values)
+                if z in NIST_sat[column].values:
+                    return return_row(z, NIST_sat[column].values)
                 else:
                     return InterpolateRow(sw_ascend, sw_index, z).complx()
             else:
-                f'{z} is not in range for {column}.\nMust be within range: {SatWat[column].values[-1]}-{SatWat[column].values[0]}.'
+                f'{z} is not in range for {column}.\nMust be within range: {NIST_sat[column].values[-1]}-{NIST_sat[column].values[0]}.'
 
     @staticmethod
     def d_pop(dictionary, line):
@@ -446,7 +466,7 @@ class QualityCalculation:
                 d = return_row(ptx, index)
                 return QualityCalculation().d_pop(d, 'g')
             elif index[0] < ptx < index[-1]:
-                d = InterpolateRow(index, SatWat.index, ptx).simple()
+                d = InterpolateRow(index, NIST_sat.index, ptx).simple()
                 return QualityCalculation().d_pop(d, 'g')
             else:
                 return f'{ptx} value must be within range of {index[0]} - {index[-1]}'
@@ -455,7 +475,7 @@ class QualityCalculation:
                 d = return_row(ptx, index)
                 return QualityCalculation().d_pop(d, 'f')
             elif index[0] < ptx < index[-1]:
-                d = InterpolateRow(index, SatWat.index, ptx).simple()
+                d = InterpolateRow(index, NIST_sat.index, ptx).simple()
                 return QualityCalculation().d_pop(d, 'f')
             else:
                 return f'{ptx} value must be within range of {index[0]} - {index[-1]}'
@@ -464,7 +484,7 @@ class QualityCalculation:
                 d = return_row(ptx, index)
                 return QualityCalculation().values(d, q)
             elif index[0] < ptx < index[-1]:
-                d = InterpolateRow(index, SatWat.index, ptx).simple()
+                d = InterpolateRow(index, NIST_sat.index, ptx).simple()
                 return QualityCalculation().values(d, q)
             else:
                 return f'{ptx} value must be within range of {index[0]} - {index[-1]}'
@@ -505,7 +525,7 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
             if quality is not None:  # p and q
                 if 0 <= quality <= 1:
                     if [v, u, h, s].count(None) == 4:
-                        return QualityCalculation().pt(p, quality, SatWat.index.get_level_values(1))
+                        return QualityCalculation().pt(p, quality, NIST_sat.index.get_level_values(1))
                     else:
                         return 'Given a pressure, including quality and another value is redundant.\nFor this, choose one.'
                 else:
@@ -513,15 +533,15 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
 
             elif quality is None:
                 if [v, u, h, s].count(None) == 4:  # only p
-                    if p in SatWat.index.get_level_values(1):
-                        return return_row(p, SatWat.index.get_level_values(1))
-                    elif SatWat.index.get_level_values(1)[0] < p < SatWat.index.get_level_values(1)[-1]:
-                        return InterpolateRow(SatWat.index.get_level_values(1), SatWat.index, p).simple()
+                    if p in NIST_sat.index.get_level_values(1):
+                        return return_row(p, NIST_sat.index.get_level_values(1))
+                    elif NIST_sat.index.get_level_values(1)[0] < p < NIST_sat.index.get_level_values(1)[-1]:
+                        return InterpolateRow(NIST_sat.index.get_level_values(1), NIST_sat.index, p).simple()
                     else:
                         return 'Pressure not in saturated range'
 
                 elif [v, u, h, s].count(None) == 3:  # p and v/u/h/s
-                    if SatWat.index.get_level_values(1)[0] <= p < SatWat.index.get_level_values(1)[-1]:
+                    if NIST_sat.index.get_level_values(1)[0] <= p < NIST_sat.index.get_level_values(1)[-1]:
                         if v is not None:
                             lst = list(saturated(p=p).values())
                             q = (v - lst[2]) / (lst[3] - lst[2])
@@ -539,8 +559,8 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
                             q = (s - lst[9]) / (lst[10] - lst[9])
                             return saturated(p=p, quality=q)
 
-                    elif p == SatWat.index.get_level_values(1)[-1]:
-                        return f'At {SatWat.index.get_level_values(1)[-1]} bar,\ngiving an additional property (v/u/h/s) is redundant.\nOnly the pressure is necessary.'
+                    elif p == NIST_sat.index.get_level_values(1)[-1]:
+                        return f'At {NIST_sat.index.get_level_values(1)[-1]} bar,\ngiving an additional property (v/u/h/s) is redundant.\nOnly the pressure is necessary.'
                     else:
                         return 'Pressure not in saturated range.'
                 else:
@@ -550,7 +570,7 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
             if quality is not None:  # t and q
                 if 0 <= quality <= 1:
                     if [v, u, h, s].count(None) == 4:
-                        return QualityCalculation().pt(t, quality, SatWat.index.get_level_values(0))
+                        return QualityCalculation().pt(t, quality, NIST_sat.index.get_level_values(0))
                     else:
                         return 'Given a temperature, including quality and another value is redundant.\nFor this, choose one.'
                 else:
@@ -558,15 +578,15 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
 
             elif quality is None:
                 if [v, u, h, s].count(None) == 4:  # only t
-                    if t in SatWat.index.get_level_values(0):
-                        return return_row(t, SatWat.index.get_level_values(0))
-                    elif SatWat.index.get_level_values(0)[0] < t < SatWat.index.get_level_values(0)[-1]:
-                        return InterpolateRow(SatWat.index.get_level_values(0), SatWat.index, t).simple()
+                    if t in NIST_sat.index.get_level_values(0):
+                        return return_row(t, NIST_sat.index.get_level_values(0))
+                    elif NIST_sat.index.get_level_values(0)[0] < t < NIST_sat.index.get_level_values(0)[-1]:
+                        return InterpolateRow(NIST_sat.index.get_level_values(0), NIST_sat.index, t).simple()
                     else:
                         return 'Temperature not in saturated range'
 
                 elif [v, u, h, s].count(None) == 3:  # t and v/u/h/s
-                    if SatWat.index.get_level_values(0)[0] <= t < SatWat.index.get_level_values(0)[-1]:
+                    if NIST_sat.index.get_level_values(0)[0] <= t < NIST_sat.index.get_level_values(0)[-1]:
                         if v is not None:
                             lst = list(saturated(t=t).values())
                             q = (v - lst[2]) / (lst[3] - lst[2])
@@ -584,8 +604,8 @@ def saturated(p=None, t=None, v=None, u=None, h=None, s=None, quality=None):
                             q = (s - lst[9]) / (lst[10] - lst[9])
                             return saturated(t=t, quality=q)
 
-                    elif t == SatWat.index.get_level_values(0)[-1]:
-                        return f'At {SatWat.index.get_level_values(0)[-1]} bar, giving an additional property (v/u/h/s) is redundant.\nOnly the temperature is necessary.'
+                    elif t == NIST_sat.index.get_level_values(0)[-1]:
+                        return f'At {NIST_sat.index.get_level_values(0)[-1]} bar, giving an additional property (v/u/h/s) is redundant.\nOnly the temperature is necessary.'
                     else:
                         return 'Temperature not in saturated range.'
                 else:

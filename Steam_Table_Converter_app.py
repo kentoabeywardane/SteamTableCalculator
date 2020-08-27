@@ -101,10 +101,10 @@ class Window:
         quality_menu.grid(row=7, column=3)
 
     def execute_superheat(self):
-        self.flow_superheat_compress(SupWat)
+        self.flow_superheat_compress(NIST_sup)
 
     def execute_compress(self):
-        self.flow_superheat_compress(CompWat)
+        self.flow_superheat_compress(NIST_comp)
 
     def execute_saturated(self):
         self.listbox1.delete(0, END)
